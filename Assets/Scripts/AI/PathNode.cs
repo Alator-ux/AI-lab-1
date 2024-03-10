@@ -1,9 +1,14 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
 public class PathNode //: MonoBehaviour
 {
+    public enum DistanceFunction
+    {
+        weighted, euclidean
+    }
     public bool walkable;           //  Свободна для перемещения
     public Vector3 worldPosition;   //  Позиция в глобальных координатах
     private GameObject objPrefab;   //  Шаблон объекта
@@ -40,10 +45,14 @@ public class PathNode //: MonoBehaviour
         //  Указываем родителя
         parentNode = parent;
         //  Вычисляем расстояние
-        if (parent != null)
+        /*if (parent != null)
             distance = parent.Distance + Vector3.Distance(body.transform.position, parent.body.transform.position);
         else
+            distance = float.PositiveInfinity;*/
+        if(parent == null)
+        {
             distance = float.PositiveInfinity;
+        }
     }
 
     /// <summary>
@@ -66,11 +75,20 @@ public class PathNode //: MonoBehaviour
     /// <param name="a"></param>
     /// <param name="b"></param>
     /// <returns></returns>
-    public static float Dist(PathNode a, PathNode b)
+    public static float Dist(PathNode a, PathNode b, DistanceFunction distanceFunction)
     {
-        return Vector3.Distance(a.body.transform.position, b.body.transform.position) + 40 * Mathf.Abs(a.body.transform.position.y - b.body.transform.position.y);
+        var dist = 0f;
+        if (distanceFunction == DistanceFunction.weighted)
+        {
+            dist = Vector3.Distance(a.body.transform.position, b.body.transform.position) + 40 * Mathf.Abs(a.body.transform.position.y - b.body.transform.position.y);
+        }
+        else
+        {
+            dist = Vector3.Distance(a.body.transform.position, b.body.transform.position);
+        }
+        return dist;
     }
-    
+
     /// <summary>
     /// Подсветить вершину - перекрасить в красный
     /// </summary>
@@ -78,7 +96,15 @@ public class PathNode //: MonoBehaviour
     {
         body.GetComponent<Renderer>().material.color = Color.red;
     }
-    
+
+    /// <summary>
+    /// Подсветить вершину как непроходимую - перекрасить в черный
+    /// </summary>
+    public void IlluminateWarning()
+    {
+        body.GetComponent<Renderer>().material.color = Color.black;
+    }
+
     /// <summary>
     /// Снять подсветку с вершины - перекрасить в синий
     /// </summary>

@@ -1,9 +1,13 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 
 public class Grid : MonoBehaviour
 {
+    public enum PathAlgorithm { wave, dijkstra, aStar }
     //  Модель для отрисовки узла сетки
     public GameObject nodeModel;
 
@@ -19,20 +23,25 @@ public class Grid : MonoBehaviour
     //  Массив узлов - создаётся один раз, при первом вызове скрипта
     private PathNode[,] grid = null;
 
+    private PathNode.DistanceFunction currentDistanceFunction = PathNode.DistanceFunction.weighted;
+    private PathAlgorithm currentAlgorithm = PathAlgorithm.wave;
+
+    public PathNode.DistanceFunction CurrentDistanceFunction { get => currentDistanceFunction; set => currentDistanceFunction = value; }
+    public PathAlgorithm CurrentAlgorithm { get => currentAlgorithm; set => currentAlgorithm = value; }
+
     private void CheckWalkableNodes()
     {
         foreach (PathNode node in grid)
         {
             //  Пока что считаем все вершины проходимыми, без учёта препятствий
             node.walkable = true;
-            /*node.walkable = !Physics.CheckSphere(node.body.transform.position, 1);
+            node.walkable = !Physics.CheckSphere(node.body.transform.position, 1);
             if (node.walkable)
                 node.Fade();
             else
             {
-                node.Illuminate();
-                Debug.Log("Not walkable!");
-            }*/
+                node.IlluminateWarning();
+            }
         }
     }
 
@@ -71,6 +80,156 @@ public class Grid : MonoBehaviour
                 return nodes;
     }
 
+    void WavePath(Vector2Int startNode, Vector2Int finishNode)
+    {
+        //  Реализуется аналог волнового алгоритма, причём найденный путь не будет являться оптимальным 
+
+        //  Очередь вершин в обработке - в A* необходимо заменить на очередь с приоритетом
+        Queue<Vector2Int> nodes = new Queue<Vector2Int>();
+        //  Начальную вершину помещаем в очередь
+        nodes.Enqueue(startNode);
+        //  Пока не обработаны все вершины (очередь содержит узлы для обработки)
+        while (nodes.Count != 0)
+        {
+            Vector2Int current = nodes.Dequeue();
+            //  Если достали целевую - можно заканчивать (это верно и для A*)
+            if (current == finishNode) break;
+            //  Получаем список соседей
+            var neighbours = GetNeighbours(current);
+            foreach (var node in neighbours)
+            {
+                if (grid[node.x, node.y].walkable && grid[node.x, node.y].Distance > grid[current.x, current.y].Distance + PathNode.Dist(grid[node.x, node.y], grid[current.x, current.y], currentDistanceFunction))
+                {
+                    float newNodeDistance = grid[current.x, current.y].Distance + PathNode.Dist(grid[node.x, node.y], grid[current.x, current.y], currentDistanceFunction);
+                    grid[node.x, node.y].Distance = newNodeDistance;
+                    grid[node.x, node.y].ParentNode = grid[current.x, current.y];
+                    nodes.Enqueue(node);
+                }
+            }
+        }
+    }
+
+    void DijkstraPath(Vector2Int startNode, Vector2Int finishNode)
+    {
+        var pq = new PriorityQueue<Vector2Int>((grid.GetLength(0) + grid.GetLength(1)) * 2);
+        pq.Enqueue(startNode, 0);
+
+        Vector2Int currentNode;
+        float currentNodeDist;
+        while (!pq.IsEmpty)
+        {
+            {
+                var tuple = pq.Dequeue();
+                currentNode = tuple.Item1;
+                currentNodeDist = tuple.Item2;
+            }
+            if(currentNode == finishNode)
+            {
+                break;
+            }
+            if(grid[currentNode.x, currentNode.y].Distance < currentNodeDist)
+            {
+                continue;
+            }
+            var neighbours = GetNeighbours(currentNode);
+            foreach (var node in neighbours)
+            {
+                if (grid[node.x, node.y].walkable)
+                {
+                    float newNodeDistance = currentNodeDist + PathNode.Dist(grid[node.x, node.y], grid[currentNode.x, currentNode.y], currentDistanceFunction);
+                    if (newNodeDistance < grid[node.x, node.y].Distance)
+                    {
+                        grid[node.x, node.y].Distance = newNodeDistance;
+                        grid[node.x, node.y].ParentNode = grid[currentNode.x, currentNode.y];
+                        pq.Enqueue(node, newNodeDistance);
+                    }
+                }
+            }
+        }
+    }
+
+    /*void AStarPath(Vector2Int startNode, Vector2Int finishNode)
+    {
+        var finish = grid[finishNode.x, finishNode.y];
+        var pq = new PriorityQueue<Vector2Int>((grid.GetLength(0) + grid.GetLength(1)) * 2);
+        pq.Enqueue(startNode, 0);
+
+        Vector2Int currentNode;
+        float currentNodeDist;
+        while (!pq.IsEmpty)
+        {
+            {
+                var tuple = pq.Dequeue();
+                currentNode = tuple.Item1;
+                currentNodeDist = tuple.Item2 - PathNode.Dist(grid[currentNode.x, currentNode.y], grid[finishNode.x, finishNode.y], currentDistanceFunction);
+            }
+            if (currentNode == finishNode)
+            {
+                break;
+            }
+            if (grid[currentNode.x, currentNode.y].Distance < currentNodeDist)
+            {
+                continue;
+            }
+            var neighbours = GetNeighbours(currentNode);
+            foreach (var node in neighbours)
+            {
+                if (grid[node.x, node.y].walkable)
+                {
+                    var newNodeDistance = currentNodeDist + PathNode.Dist(grid[node.x, node.y], grid[currentNode.x, currentNode.y], currentDistanceFunction);
+                    if (newNodeDistance < grid[node.x, node.y].Distance)
+                    {
+                        grid[node.x, node.y].Distance = newNodeDistance;
+                        grid[node.x, node.y].ParentNode = grid[currentNode.x, currentNode.y];
+                        var expectedFullDistance = newNodeDistance + PathNode.Dist(grid[node.x, node.y], finish, currentDistanceFunction);
+                        pq.Enqueue(node, expectedFullDistance);
+                    }
+                }
+            }
+        }
+    }*/
+
+    void AStarPath(Vector2Int startNode, Vector2Int finishNode)
+    {
+        var finish = grid[finishNode.x, finishNode.y];
+        var pq = new PriorityQueue<Tuple<Vector2Int, float>>((grid.GetLength(0) + grid.GetLength(1)) * 2);
+        pq.Enqueue(new Tuple<Vector2Int, float>(startNode, 0), 0);
+
+        Vector2Int currentNode;
+        float currentNodeDist;
+        while (!pq.IsEmpty)
+        {
+            {
+                var tuple = pq.Dequeue();
+                currentNode = tuple.Item1.Item1;
+                currentNodeDist = tuple.Item1.Item2;
+            }
+            if (currentNode == finishNode)
+            {
+                break;
+            }
+            if (grid[currentNode.x, currentNode.y].Distance < currentNodeDist)
+            {
+                continue;
+            }
+            var neighbours = GetNeighbours(currentNode);
+            foreach (var node in neighbours)
+            {
+                if (grid[node.x, node.y].walkable)
+                {
+                    var newNodeDistance = currentNodeDist + PathNode.Dist(grid[node.x, node.y], grid[currentNode.x, currentNode.y], currentDistanceFunction);
+                    if (newNodeDistance < grid[node.x, node.y].Distance)
+                    {
+                        grid[node.x, node.y].Distance = newNodeDistance;
+                        grid[node.x, node.y].ParentNode = grid[currentNode.x, currentNode.y];
+                        var expectedFullDistance = newNodeDistance + PathNode.Dist(grid[node.x, node.y], finish, currentDistanceFunction);
+                        pq.Enqueue(new Tuple<Vector2Int, float>(node, newNodeDistance), expectedFullDistance);
+                    }
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Вычисление "кратчайшего" между двумя вершинами сетки
     /// </summary>
@@ -83,38 +242,30 @@ public class Grid : MonoBehaviour
         {
             node.Fade();
             node.ParentNode = null;
+            node.Distance = float.PositiveInfinity;
         }
         
         //  На данный момент вызов этого метода не нужен, там только устанавливается проходимость вершины. Можно добавить обработку препятствий
         CheckWalkableNodes();
 
-        //  Реализуется аналог волнового алгоритма, причём найденный путь не будет являться оптимальным 
-
-        PathNode start = grid[startNode.x, startNode.y];
-
         //  Начальную вершину отдельно изменяем
+        PathNode start = grid[startNode.x, startNode.y];
         start.ParentNode = null;
         start.Distance = 0;
-        
-        //  Очередь вершин в обработке - в A* необходимо заменить на очередь с приоритетом
-        Queue<Vector2Int> nodes = new Queue<Vector2Int>();
-        //  Начальную вершину помещаем в очередь
-        nodes.Enqueue(startNode);
-        //  Пока не обработаны все вершины (очередь содержит узлы для обработки)
-        while(nodes.Count != 0)
+        Debug.Log($"Current\tdistance function:\t{currentDistanceFunction}\n\tpath finding algorithm:\t{currentAlgorithm}");
+        switch (currentAlgorithm)
         {
-            Vector2Int current = nodes.Dequeue();
-            //  Если достали целевую - можно заканчивать (это верно и для A*)
-            if (current == finishNode) break;
-            //  Получаем список соседей
-            var neighbours = GetNeighbours(current);
-            foreach (var node in neighbours)
-                if(grid[node.x, node.y].walkable && grid[node.x, node.y].Distance > grid[current.x, current.y].Distance + PathNode.Dist(grid[node.x, node.y], grid[current.x, current.y]))
-                {
-                    grid[node.x, node.y].ParentNode = grid[current.x, current.y];
-                    nodes.Enqueue(node);
-                }
+            case PathAlgorithm.wave:
+                WavePath(startNode, finishNode);
+                break;
+            case PathAlgorithm.dijkstra:
+                DijkstraPath(startNode, finishNode);
+                break;
+            case PathAlgorithm.aStar:
+                AStarPath(startNode, finishNode);
+                break;
         }
+        
         //  Восстанавливаем путь от целевой к стартовой
         var pathElem = grid[finishNode.x, finishNode.y];
         while(pathElem != null)
@@ -132,5 +283,10 @@ public class Grid : MonoBehaviour
         updateAtFrame = Time.frameCount + 1000;
 
         calculatePath(new Vector2Int(0, 0), new Vector2Int(grid.GetLength(0)-1, grid.GetLength(1)-1));
+    }
+
+    public void ForceToUpdate()
+    {
+        updateAtFrame = Time.frameCount + 1;
     }
 }
